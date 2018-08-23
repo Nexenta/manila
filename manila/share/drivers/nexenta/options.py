@@ -1,4 +1,4 @@
-# Copyright 2016 Nexenta Systems, Inc.
+# Copyright 2018 Nexenta Systems, Inc.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -23,7 +23,7 @@
 from oslo_config import cfg
 
 nexenta_connection_opts = [
-    cfg.StrOpt('nexenta_host',
+    cfg.StrOpt('nexenta_rest_host',
                help='IP address of Nexenta storage appliance.'),
     cfg.IntOpt('nexenta_rest_port',
                default=8457,
@@ -50,9 +50,14 @@ nexenta_connection_opts = [
     cfg.BoolOpt('nexenta_nfs',
                 default=True,
                 help='On if share over NFS is enabled.'),
+    cfg.BoolOpt('nexenta_ssl_cert_verify',
+                default=False,
+                help='Defines whether the driver should check ssl cert.'),
 ]
 
 nexenta_nfs_opts = [
+    cfg.StrOpt('nexenta_nas_host',
+               help='IP address of Nexenta storage appliance.'),
     cfg.StrOpt('nexenta_mount_point_base',
                default='$state_path/mnt',
                help='Base directory that contains NFS share mount points.'),

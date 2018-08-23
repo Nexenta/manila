@@ -1,4 +1,4 @@
-# Copyright 2016 Nexenta Systems, Inc.
+# Copyright 2018 Nexenta Systems, Inc.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -52,3 +52,8 @@ def str2gib_size(s):
 
 def bytes_to_gb(size):
     return float(size) / units.Gi
+
+
+def ex2err(ex):
+    """Convert a Cinder Exception to a Nexenta Error."""
+    return ex.msg

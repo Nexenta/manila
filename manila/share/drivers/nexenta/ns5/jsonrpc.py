@@ -1,4 +1,4 @@
-# Copyright 2016 Nexenta Systems, Inc.
+# Copyright 2018 Nexenta Systems, Inc.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -12,134 +12,330 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-"""
-:mod:`nexenta.jsonrpc` -- Nexenta-specific JSON RPC client
-=====================================================================
 
-.. automodule:: nexenta.jsonrpc
-"""
-
-import base64
 import json
 import requests
-from requests.packages.urllib3 import exceptions
+import six
 import time
 
-from oslo_log import log
-from oslo_serialization import jsonutils
+from oslo_log import log as logging
 
 from manila import exception
 from manila.i18n import _
+from manila.utils import retry
+from manila.share.drivers.nexenta import utils
+from oslo_serialization import jsonutils
+from requests.cookies import extract_cookies_to_jar
+from requests.packages.urllib3 import exceptions
 
-LOG = log.getLogger(__name__)
+LOG = logging.getLogger(__name__)
+TIMEOUT = 60
+APPLIANCE = 'NexentaStor Appliance'
+
 requests.packages.urllib3.disable_warnings(exceptions.InsecureRequestWarning)
-requests.packages.urllib3.disable_warnings(
-    exceptions.InsecurePlatformWarning)
-session = requests.Session()
+requests.packages.urllib3.disable_warnings(exceptions.InsecurePlatformWarning)
 
 
-class NexentaJSONProxy(object):
-    def __init__(self, scheme, host, port, user,
-                 password, method='get'):
-        self.scheme = scheme
-        self.host = host
-        self.port = port
-        self.user = user
-        self.password = password
-        self.method = method
+def check_error(response):
+    code = response.status_code
+    if code not in (200, 201, 202):
+        reason = response.reason
+        body = response.content
+        try:
+            content = jsonutils.loads(body) if body else None
+        except ValueError:
+            msg = (_('Could not parse response from %(appliance)s: '
+                     '%(code)s %(reason)s %(body)s')
+                   % {'appliance': APPLIANCE,
+                      'code': code,
+                      'reason': reason,
+                      'body': body})
+            raise exception.NexentaException(msg)
+        msg = (_('Got bad response from %(appliance)s: '
+                 '%(code)s %(reason)s %(content)s')
+               % {'appliance': APPLIANCE,
+                  'code': code,
+                  'reason': reason,
+                  'content': content})
+        raise exception.NexentaException(msg)
 
-    @property
-    def url(self):
-        return '%s://%s:%s/' % (self.scheme, self.host, self.port)
 
-    def __getattr__(self, method='get'):
-        if method:
-            return NexentaJSONProxy(
-                self.scheme, self.host, self.port,
-                self.user, self.password, method)
+class RESTCaller(object):
 
-    def __hash__(self):
-        return self.url.__hash__()
+    retry_exc_tuple = (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ConnectTimeout
+    )
 
-    def __repr__(self):
-        return 'NEF proxy: %s' % self.url
+    def __init__(self, proxy, method):
+        self.__proxy = proxy
+        self.__method = method
 
-    def __call__(self, path, data=None):
-        auth = base64.b64encode(
-            ('%s:%s' % (self.user, self.password)).encode('utf-8'))
-        url = self.url + path
+    def get_full_url(self, path):
+        return '/'.join((self.__proxy.url, path))
 
-        if data:
-            data = jsonutils.dumps(data)
+    @retry(retry_exc_tuple, interval=1, retries=6)
+    def __call__(self, *args):
+        url = self.get_full_url(args[0])
+        kwargs = {'timeout': TIMEOUT, 'verify': self.__proxy.verify}
+        data = None
+        if len(args) > 1:
+            kwargs['json'] = args[1]
+            data = args[1]
 
-        LOG.debug('Sending JSON to url: %s, data: %s, method: %s',
-                  path, data, self.method)
-        session.headers.update({'Content-Type': 'application/json'})
+        LOG.debug('Issuing call to %(appliance)s: '
+                  '%(url)s %(method)s data: %(data)s',
+                  {'appliance': APPLIANCE,
+                   'url': url,
+                   'method': self.__method,
+                   'data': data})
 
-        response = getattr(session, self.method)(
-            url, data=data, verify=False)
-        if response.status_code in (401, 403):
-            LOG.debug('Login requested by NexentaStor')
-            if self.scheme == 'http':
-                session.headers.update({'Authorization': 'Basic %s' % auth})
+        try:
+            response = getattr(
+                self.__proxy.session, self.__method)(url, **kwargs)
+        except requests.exceptions.ConnectionError:
+            LOG.warning('Connection error on call to %(appliance)s: '
+                        '%(url)s %(method)s data: %(data)s',
+                        {'appliance': APPLIANCE,
+                         'url': self.__proxy.url,
+                         'method': self.__method,
+                         'data': data})
+            self.handle_failover()
+            url = self.get_full_url(args[0])
+            response = getattr(
+                self.__proxy.session, self.__method)(url, **kwargs)
+        try:
+            check_error(response)
+        except exception.NexentaException as ex:
+            if ex.kwargs['code'] == 'ENOENT':
+                err = utils.ex2err(ex)
+                LOG.warning('Exception on call to %(appliance)s: '
+                            '%(url)s %(method)s data: %(data)s '
+                            'returned message: %(message)s',
+                            {'appliance': APPLIANCE,
+                             'url': url,
+                             'method': self.__method,
+                             'data': data,
+                             'message': six.text_type(err)})
+                if (ex.kwargs['source'] == 'hpr' and
+                        'Destination pool' in err):
+                    return None
+                self.handle_failover()
+                url = self.get_full_url(args[0])
+                response = getattr(
+                    self.__proxy.session, self.__method)(url, **kwargs)
             else:
-                session.headers.update(
-                    {'Authorization': 'Bearer %s' % self.https_auth()})
-            LOG.debug('Re-sending JSON to url: %s, data: %s, method: %s',
-                      path, data, self.method)
-            response = getattr(session, self.method)(
-                url, data=data, verify=False)
-        self.check_error(response)
+                raise
+        check_error(response)
         content = json.loads(response.content) if response.content else None
-        LOG.debug("Got response: %(code)s %(reason)s %(content)s", {
-            'code': response.status_code,
-            'reason': response.reason,
-            'content': content})
-        response.close()
+        LOG.debug('Got response from %(appliance)s: '
+                  '%(code)s %(reason)s %(content)s',
+                  {'appliance': APPLIANCE,
+                   'code': response.status_code,
+                   'reason': response.reason,
+                   'content': content})
 
         if response.status_code == 202 and content:
-            url = self.url + content['links'][0]['href']
+            url = self.get_full_url(content['links'][0]['href'])
             keep_going = True
             while keep_going:
                 time.sleep(1)
-                response = session.get(url, verify=False)
-                self.check_error(response)
-                LOG.debug("Got response: %(code)s %(reason)s", {
-                    'code': response.status_code,
-                    'reason': response.reason})
-                content = json.loads(
-                    response.content) if response.content else None
+                response = self.__proxy.session.get(
+                    url, verify=self.__proxy.verify)
+                try:
+                    check_error(response)
+                except exception.NexentaException as ex:
+                    if ex.kwargs['code'] == 'ENOENT':
+                        err = utils.ex2err(ex)
+                        LOG.debug('Exception on call to %(appliance)s: '
+                                  '%(url)s %(method)s data: %(data)s '
+                                  'returned message: %(message)s',
+                                  {'appliance': APPLIANCE,
+                                   'url': url,
+                                   'method': self.__method,
+                                   'data': data,
+                                   'message': six.text_type(err)})
+                        if (ex.kwargs['source'] == 'hpr' and
+                                'Destination pool' in err):
+                            return content
+                        self.handle_failover()
+                        url = self.get_full_url(args[0])
+                        response = getattr(
+                            self.__proxy.session, self.__method)(url, **kwargs)
+                    else:
+                        raise
+                LOG.debug('Got response from %(appliance)s: '
+                          '%(code)s %(reason)s',
+                          {'appliance': APPLIANCE,
+                           'code': response.status_code,
+                           'reason': response.reason})
+                content = response.json() if response.content else None
                 keep_going = response.status_code == 202
-                response.close()
         return content
 
-    def https_auth(self):
-        url = self.url + 'auth/login'
-        data = jsonutils.dumps(
-            {'username': self.user, 'password': self.password})
-        response = session.post(
-            url, data=data, verify=False)
-        content = json.loads(response.content) if response.content else None
-        LOG.debug("Got response: %(code)s %(reason)s %(content)s", {
-            'code': response.status_code,
-            'reason': response.reason,
-            'content': content})
-        response.close()
-        return content['token']
+    def handle_failover(self):
+        if self.__proxy.backup:
+            LOG.info('Primary %(appliance)s %(host)s is unavailable, '
+                     'failing over to secondary %(backup)s',
+                     {'appliance': APPLIANCE,
+                      'host': self.__proxy.host,
+                      'backup': self.__proxy.backup})
+            host = '%s,%s' % (self.__proxy.backup, self.__proxy.host)
+            self.__proxy.__init__(
+                host, self.__proxy.port, self.__proxy.user,
+                self.__proxy.password, self.__proxy.use_https,
+                self.__proxy.pool, self.__proxy.verify)
+            url = self.get_full_url('rsf/clusters')
+            response = self.__proxy.session.get(
+                url, verify=self.__proxy.verify)
+            content = response.json() if response.content else None
+            if not content:
+                raise exception.NexentaException(response)
+            cluster_name = content['data'][0]['clusterName']
+            for node in content['data'][0]['nodes']:
+                if node['ipAddress'] == self.__proxy.host:
+                    node_name = node['machineName']
+            counter = 0
+            interval = 5
+            url = self.get_full_url(
+                'rsf/clusters/%s/services' % cluster_name)
+            while counter < 24:
+                counter += 1
+                response = self.__proxy.session.get(
+                    url, verify=self.__proxy.verify)
+                content = response.json() if response.content else None
+                if content:
+                    for service in content['data']:
+                        if service['serviceName'] == self.__proxy.pool:
+                            if len(service['vips']) == 0:
+                                continue
+                            for mapping in service['vips'][0]['nodeMapping']:
+                                if (mapping['node'] == node_name and
+                                        mapping['status'] == 'up'):
+                                    return
+                LOG.debug('Pool %(pool)s service is not ready, '
+                          'sleeping for %(interval)ss',
+                          {'pool': self.__proxy.pool,
+                           'interval': interval})
+                time.sleep(interval)
+            msg = (_('Waited for %(period)ss, but pool %(pool)s '
+                     'service is still not running')
+                   % {'period': counter * interval,
+                      'pool': self.__proxy.pool})
+            raise exception.NexentaException(msg)
+        else:
+            raise
 
-    def check_error(self, response):
-        code = response.status_code
-        if code not in (200, 201, 202):
-            reason = response.reason
-            content = json.loads(
-                response.content) if response.content else None
-            response.close()
-            if content and 'code' in content:
-                message = content.get(
-                    'message', 'Message is not specified by Nexenta REST')
-                raise exception.NexentaException(
-                    reason=message, code=content['code'])
-            raise exception.NexentaException(
-                reason=_(
-                    'Got bad response: %(code)s %(reason)s %(content)s') % {
-                        'code': code, 'reason': reason, 'content': content})
+
+class HTTPSAuth(requests.auth.AuthBase):
+
+    def __init__(self, url, username, password, verify):
+        self.url = url
+        self.username = username
+        self.password = password
+        self.token = None
+        self.verify = verify
+
+    def __eq__(self, other):
+        return all([
+            self.url == getattr(other, 'url', None),
+            self.username == getattr(other, 'username', None),
+            self.password == getattr(other, 'password', None),
+            self.token == getattr(other, 'token', None)
+        ])
+
+    def __ne__(self, other):
+        return not self == other
+
+    def handle_401(self, r, **kwargs):
+        if r.status_code == 401:
+            LOG.debug('Got [401] response from %(appliance)s: '
+                      'trying to reauthenticate ...',
+                      {'appliance': APPLIANCE})
+            self.token = self.https_auth()
+            # Consume content and release the original connection
+            # to allow our new request to reuse the same one.
+            r.content
+            r.close()
+            prep = r.request.copy()
+            extract_cookies_to_jar(prep._cookies, r.request, r.raw)
+            prep.prepare_cookies(prep._cookies)
+
+            prep.headers['Authorization'] = 'Bearer %s' % self.token
+            _r = r.connection.send(prep, **kwargs)
+            _r.history.append(r)
+            _r.request = prep
+
+            return _r
+        return r
+
+    def __call__(self, r):
+        if not self.token:
+            self.token = self.https_auth()
+        r.headers['Authorization'] = 'Bearer %s' % self.token
+        r.register_hook('response', self.handle_401)
+        return r
+
+    def https_auth(self):
+        LOG.debug('Sending auth request to %(appliance)s: %(url)s',
+                  {'appliance': APPLIANCE,
+                   'url': self.url})
+        url = '/'.join((self.url, 'auth/login'))
+        headers = {'Content-Type': 'application/json'}
+        data = {'username': self.username, 'password': self.password}
+        response = requests.post(url, json=data, verify=self.verify,
+                                 headers=headers, timeout=TIMEOUT)
+        content = json.loads(response.content) if response.content else None
+        LOG.debug('Auth response from %(appliance)s: '
+                  '%(code)s %(reason)s %(content)s',
+                  {'appliance': APPLIANCE,
+                   'code': response.status_code,
+                   'reason': response.reason,
+                   'content': content})
+        check_error(response)
+        response.close()
+        if response.content:
+            token = content['token']
+            del content['token']
+            return token
+        msg = (_('Got bad response from %(appliance)s: '
+                 '%(code)s %(reason)s')
+               % {'appliance': APPLIANCE,
+                  'code': response.status_code,
+                  'reason': response.reason})
+        raise exception.NexentaException(msg)
+
+
+class NexentaJSONProxy(object):
+
+    def __init__(self, host, port, user, password, use_https, pool, verify):
+        self.session = requests.Session()
+        self.session.headers.update({'Content-Type': 'application/json'})
+        self.pool = pool
+        self.user = user
+        self.verify = verify
+        self.password = password
+        self.use_https = use_https
+        parts = host.split(',')
+        self.host = parts[0].strip()
+        self.backup = parts[1].strip() if len(parts) > 1 else None
+        if use_https:
+            self.scheme = 'https'
+            self.port = port if port else 8443
+            self.session.auth = HTTPSAuth(self.url, user, password, verify)
+        else:
+            self.scheme = 'http'
+            self.port = port if port else 8080
+            self.session.auth = (user, password)
+
+    @property
+    def url(self):
+        return '{}://{}:{}'.format(self.scheme, self.host, self.port)
+
+    def __getattr__(self, name):
+        if name in ('get', 'post', 'put', 'delete'):
+            return RESTCaller(self, name)
+        return super(NexentaJSONProxy, self).__getattribute__(name)
+
+    def __repr__(self):
+        return 'HTTP JSON proxy: %s' % self.url
