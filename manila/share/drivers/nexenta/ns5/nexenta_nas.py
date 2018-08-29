@@ -190,12 +190,12 @@ class NexentaNasDriver(driver.ShareDriver):
     def create_share_from_snapshot(self, context, share, snapshot,
                                    share_server=None):
         """Is called to create share from snapshot."""
-        LOG.debug('Creating share from snapshot %s.', snapshot['name'])
+        LOG.debug('Creating share from snapshot %s.', snapshot['snapshot_id'])
 
         fs_path = urllib.parse.quote_plus(self._get_dataset_name(
             snapshot['share_instance']['share_id']))
         url = ('storage/snapshots/%s/clone') % (
-            '@'.join([fs_path, snapshot['name']]))
+            '@'.join([fs_path, snapshot['snapshot_id']]))
         path = self._get_dataset_name(share['share_id'])
         size = int(share['size'] * units.Gi * ZFS_MULTIPLIER)
         data = {
@@ -314,7 +314,7 @@ class NexentaNasDriver(driver.ShareDriver):
         share_path = self._get_dataset_name(snapshot['share']['share_id'])
         url = 'storage/snapshots'
         data = {
-            'path': '%s@%s' % (share_path, snapshot['name'])
+            'path': '%s@%s' % (share_path, snapshot['snapshot_id'])
         }
         self.nef.post(url, data)
 
@@ -322,9 +322,9 @@ class NexentaNasDriver(driver.ShareDriver):
         """Delete a snapshot."""
         LOG.debug('Deleting a snapshot: %(shr_name)s@%(snap_name)s.', {
             'shr_name': snapshot['share']['share_id'],
-            'snap_name': snapshot['name']})
+            'snap_name': snapshot['snapshot_id']})
         path = '%s@%s' % (self._get_dataset_name(
-            snapshot['share']['share_id']), snapshot['name'])
+            snapshot['share']['share_id']), snapshot['snapshot_id'])
         params = {'path': path}
         url = 'storage/snapshots?%s' % urllib.parse.urlencode(params)
         snap_data = self.nef.get(url).get('data')
@@ -406,7 +406,7 @@ class NexentaNasDriver(driver.ShareDriver):
     def _update_share_stats(self, data=None):
         super(NexentaNasDriver, self)._update_share_stats()
         total, free, allocated = self._get_capacity_info()
-
+        compression = False if (self.dataset_compression == 'off') else True
         data = {
             'vendor_name': 'Nexenta',
             'storage_protocol': self.storage_protocol,
@@ -417,6 +417,7 @@ class NexentaNasDriver(driver.ShareDriver):
             'create_share_from_snapshot_support': True,
             'pools': [{
                 'pool_name': self.pool_name,
+                'compression': compression,
                 'total_capacity_gb': int(total),
                 'free_capacity_gb': int(free),
                 'reserved_percentage': (
