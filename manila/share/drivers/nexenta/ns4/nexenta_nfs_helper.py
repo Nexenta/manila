@@ -35,7 +35,6 @@ class NFSHelper(object):
             self.configuration.nexenta_mount_point_base)
         self.dataset_compression = (
             self.configuration.nexenta_dataset_compression)
-        self.dataset_dedupe = self.configuration.nexenta_dataset_dedupe
         self.nms = None
         self.nms_protocol = self.configuration.nexenta_rest_protocol
         self.nms_host = self.configuration.nexenta_host
@@ -205,7 +204,6 @@ class NFSHelper(object):
         """
         total, free, allocated = self._get_capacity_info()
         compression = not self.dataset_compression == 'off'
-        dedupe = not self.dataset_dedupe == 'off'
         return {
             'vendor_name': 'Nexenta',
             'storage_protocol': self.storage_protocol,
@@ -217,7 +215,6 @@ class NFSHelper(object):
                 'reserved_percentage':
                     self.configuration.reserved_share_percentage,
                 'compression': compression,
-                'dedupe': dedupe,
                 'max_over_subscription_ratio': (
                     self.configuration.safe_get(
                         'max_over_subscription_ratio')),
