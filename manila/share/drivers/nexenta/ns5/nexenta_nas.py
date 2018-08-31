@@ -122,7 +122,7 @@ class NexentaNasDriver(driver.ShareDriver):
         data = self.nef.get(url).get('data')
         if not (data and data[0].get('shareState') == 'online'):
             msg = (_('NFS share %(share)s is not accessible')
-                   % {'share': self.share})
+                   % {'share': self.folder})
             raise exception.NexentaException(msg)
         self._get_provisioned_capacity()
 
