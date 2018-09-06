@@ -72,7 +72,7 @@ class NexentaNasDriver(driver.ShareDriver):
         self.nef_password = self.configuration.nexenta_password
 
         self.pool_name = self.configuration.nexenta_pool
-        self.fs_prefix = self.configuration.nexenta_folder
+        self.parent_fs = self.configuration.nexenta_folder
 
         self.storage_protocol = 'NFS'
         self.nfs_mount_point_base = self.configuration.nexenta_mount_point_base
@@ -82,7 +82,7 @@ class NexentaNasDriver(driver.ShareDriver):
 
     @property
     def share_path(self):
-        return '/'.join([self.pool_name, self.fs_prefix])
+        return '/'.join([self.pool_name, self.parent_fs])
 
     @property
     def share_backend_name(self):
@@ -117,12 +117,12 @@ class NexentaNasDriver(driver.ShareDriver):
                 _("Pool {} does not exist in Nexenta Store appliance").format(
                     self.pool_name))
 
-        url = 'nas/nfs?filesystem=%s' % urllib.parse.quote_plus(
+        url = 'storage/filesystems?path=%s' % urllib.parse.quote_plus(
             self.share_path)
-        data = self.nef.get(url).get('data')
-        if not (data and data[0].get('shareState') == 'online'):
-            msg = (_('NFS share %(share)s is not accessible')
-                   % {'share': self.folder})
+
+        if not self.nef.get(url).get('data'):
+            msg = (_('Folder %s does not exist on NexentaStor appliance')
+                   % self.share_path)
             raise exception.NexentaException(msg)
         self._get_provisioned_capacity()
 
@@ -166,7 +166,7 @@ class NexentaNasDriver(driver.ShareDriver):
                     "Cannot destroy created filesystem: %(vol)s/%(folder)s, "
                     "exception: %(exc)s",
                     {'vol': self.pool_name, 'folder': '/'.join(
-                        [self.fs_prefix, share['share_id']]), 'exc': exc})
+                        [self.parent_fs, share['share_id']]), 'exc': exc})
             raise app_perm_exc
         dataset_url = 'storage/filesystems/%s' % (
             urllib.parse.quote_plus(dataset_name))
@@ -210,7 +210,7 @@ class NexentaNasDriver(driver.ShareDriver):
 
         location = {
             'path': '{}:/{}/{}/{}'.format(self.nas_host, self.pool_name,
-                                          self.fs_prefix, share['share_id'])
+                                          self.parent_fs, share['share_id'])
         }
         try:
             self._add_permission(share['share_id'])
@@ -224,7 +224,7 @@ class NexentaNasDriver(driver.ShareDriver):
                             "%(vol)s/%(filesystem)s",
                             {'vol': self.pool_name,
                              'filesystem': '/'.join(
-                                 [self.fs_prefix, share['share_id']])})
+                                 [self.parent_fs, share['share_id']])})
             raise
 
         self.provisioned_capacity += share['size']
@@ -354,7 +354,7 @@ class NexentaNasDriver(driver.ShareDriver):
         :param share_server: Data structure with share server information.
         Not used by this driver.
         """
-        LOG.debug('Updating access to share %s.', share)
+        LOG.debug('Updating access to share %s.', share['share_id'])
         rw_list = []
         ro_list = []
         security_contexts = []
@@ -390,9 +390,16 @@ class NexentaNasDriver(driver.ShareDriver):
         append_sc(rw_list, 'readWriteList')
         append_sc(ro_list, 'readOnlyList')
         data = {"securityContexts": security_contexts}
-        url = 'nas/nfs/' + PATH_DELIMITER.join(
-            [self.pool_name, self.fs_prefix, share['share_id']])
-        self.nef.put(url, data)
+        fs_path = self._get_dataset_name(share['share_id'])
+        url = 'nas/nfs?filesystem=%s' % urllib.parse.quote_plus(fs_path)
+        if self.nef.get(url).get('data'):
+            url = 'nas/nfs/' + PATH_DELIMITER.join(
+                [self.pool_name, self.parent_fs, share['share_id']])
+            self.nef.put(url, data)
+        else:
+            url = 'nas/nfs'
+            data['filesystem'] = fs_path
+            self.nef.post(url, data)
 
     def _set_quota(self, share_id, new_size):
         quota = int(new_size * units.Gi * ZFS_MULTIPLIER)
@@ -435,7 +442,7 @@ class NexentaNasDriver(driver.ShareDriver):
     def _get_capacity_info(self):
         """Calculate available space on the NFS share."""
         url = 'storage/pools/{}/filesystems/{}'.format(self.pool_name,
-                                                       self.fs_prefix)
+                                                       self.parent_fs)
         data = self.nef.get(url)
         total = utils.bytes_to_gb(data['bytesAvailable'])
         allocated = utils.bytes_to_gb(data['bytesUsed'])
@@ -451,7 +458,7 @@ class NexentaNasDriver(driver.ShareDriver):
             'Creating RW ACE for filesystem everyone on Nexenta Store '
             'for <%s> filesystem.', share_name)
         url = 'storage/pools/{}/filesystems/{}/acl'.format(
-            self.pool_name, PATH_DELIMITER.join([self.fs_prefix, share_name]))
+            self.pool_name, PATH_DELIMITER.join([self.parent_fs, share_name]))
         data = {
             "type": "allow",
             "principal": "everyone@",

@@ -51,6 +51,8 @@ def check_error(response):
                       'reason': reason,
                       'body': body})
             raise exception.NexentaException(msg)
+        if content and 'code' in content:
+            raise exception.NexentaException(six.text_type(content))
         msg = (_('Got bad response from %(appliance)s: '
                  '%(code)s %(reason)s %(content)s')
                % {'appliance': APPLIANCE,
@@ -107,8 +109,8 @@ class RESTCaller(object):
         try:
             check_error(response)
         except exception.NexentaException as ex:
-            if ex.kwargs['code'] == 'ENOENT':
-                err = utils.ex2err(ex)
+            err = utils.ex2err(ex)
+            if err['code'] == 'ENOENT':
                 LOG.warning('Exception on call to %(appliance)s: '
                             '%(url)s %(method)s data: %(data)s '
                             'returned message: %(message)s',
@@ -117,8 +119,8 @@ class RESTCaller(object):
                              'method': self.__method,
                              'data': data,
                              'message': six.text_type(err)})
-                if (ex.kwargs['source'] == 'hpr' and
-                        'Destination pool' in err):
+                if (err['source'] == 'hpr' and
+                        'Destination pool' in err['message']):
                     return None
                 self.handle_failover()
                 url = self.get_full_url(args[0])
@@ -145,8 +147,8 @@ class RESTCaller(object):
                 try:
                     check_error(response)
                 except exception.NexentaException as ex:
-                    if ex.kwargs['code'] == 'ENOENT':
-                        err = utils.ex2err(ex)
+                    err = utils.ex2err(ex)
+                    if err['code'] == 'ENOENT':
                         LOG.debug('Exception on call to %(appliance)s: '
                                   '%(url)s %(method)s data: %(data)s '
                                   'returned message: %(message)s',
@@ -155,8 +157,8 @@ class RESTCaller(object):
                                    'method': self.__method,
                                    'data': data,
                                    'message': six.text_type(err)})
-                        if (ex.kwargs['source'] == 'hpr' and
-                                'Destination pool' in err):
+                        if (err['source'] == 'hpr' and
+                                'Destination pool' in err['message']):
                             return content
                         self.handle_failover()
                         url = self.get_full_url(args[0])

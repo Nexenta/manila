@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import ast
 import re
 import six
 
@@ -56,4 +57,4 @@ def bytes_to_gb(size):
 
 def ex2err(ex):
     """Convert a Cinder Exception to a Nexenta Error."""
-    return ex.msg
+    return ast.literal_eval(ex.msg)
