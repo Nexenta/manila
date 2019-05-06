@@ -448,12 +448,13 @@ class NexentaNasDriver(driver.ShareDriver):
             for addr in addr_list:
                 address_mask = addr.strip().split('/', 1)
                 address = address_mask[0]
-                ls = [{"allow": True, "etype": "network", "entity": address}]
+                ls = [{"allow": True, "etype": "fqdn", "entity": address}]
                 if len(address_mask) == 2:
                     try:
                         mask = int(address_mask[1])
-                        if mask < 31:
+                        if 0 <= mask < 31:
                             ls[0]['mask'] = mask
+                            ls[0]['etype'] = 'network'
                     except Exception:
                         raise exception.InvalidInput(
                             reason=_(
