@@ -207,6 +207,9 @@ class NFSHelper(object):
                 'free_capacity_gb': free,
                 'reserved_percentage':
                     self.configuration.reserved_share_percentage,
+                'reserved_snapshot_percentage':
+                    (self.configuration.reserved_share_from_snapshot_percentage
+                        or self.configuration.reserved_share_percentage),
                 'compression': compression,
                 'max_over_subscription_ratio': (
                     self.configuration.safe_get(
