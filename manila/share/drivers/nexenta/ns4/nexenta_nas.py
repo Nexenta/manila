@@ -1,5 +1,4 @@
-# Copyright 2016 Nexenta Systems, Inc.
-# All Rights Reserved.
+# Copyright 2021 Nexenta by DDN, Inc. All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -16,7 +15,7 @@
 from oslo_log import log
 
 from manila import exception
-from manila.i18n import _, _LI
+from manila.i18n import _
 from manila.share import driver
 from manila.share.drivers.nexenta.ns4 import nexenta_nfs_helper
 from manila.share.drivers.nexenta import options
@@ -98,7 +97,7 @@ class NexentaNasDriver(driver.ShareDriver):
         LOG.debug('Creating a snapshot of share %s.', snapshot['share_name'])
         snap_id = self.helper.create_snapshot(
             snapshot['share_name'], snapshot['name'])
-        LOG.info(_LI('Created snapshot %s.'), snap_id)
+        LOG.info('Created snapshot %s.', snap_id)
 
     def delete_snapshot(self, context, snapshot, share_server=None):
         """Delete a snapshot."""
