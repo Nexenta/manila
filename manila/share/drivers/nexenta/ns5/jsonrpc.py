@@ -1,5 +1,4 @@
-# Copyright 2019 Nexenta Systems, Inc.
-# All Rights Reserved.
+# Copyright 2021 Nexenta by DDN, Inc. All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -515,6 +514,8 @@ class NefProxy(object):
             backoff_factor=conf.nexenta_rest_backoff_factor)
         adapter = requests.adapters.HTTPAdapter(max_retries=max_retries)
         self.session.verify = conf.nexenta_ssl_cert_verify
+        if self.session.verify and conf.nexenta_ssl_cert_path:
+            self.session.verify = conf.nexenta_ssl_cert_path
         self.session.headers.update(self.headers)
         self.session.mount('%s://' % self.scheme, adapter)
         if not conf.nexenta_ssl_cert_verify:
