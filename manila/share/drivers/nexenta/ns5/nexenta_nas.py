@@ -25,7 +25,7 @@ from manila.share.drivers.nexenta.ns5 import jsonrpc
 from manila.share.drivers.nexenta import options
 from manila.share.drivers.nexenta import utils
 
-VERSION = '1.1'
+VERSION = '1.2'
 LOG = log.getLogger(__name__)
 ZFS_MULTIPLIER = 1.1  # ZFS quotas do not take metadata into account.
 
@@ -40,6 +40,7 @@ class NexentaNasDriver(driver.ShareDriver):
             - Unshare filesystem completely after last securityContext
               is removed.
             - Moved all http/url code to jsonrpc.
+        1.2 - Added nexenta_ssl_cert_path configuration option.
     """
 
     driver_prefix = 'nexenta'
