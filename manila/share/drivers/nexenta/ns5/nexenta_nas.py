@@ -1,5 +1,4 @@
-# Copyright 2019 Nexenta Systems, Inc.
-# All Rights Reserved.
+# Copyright 2020 Nexenta by DDN, Inc. All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -17,7 +16,6 @@ import posixpath
 
 from oslo_log import log
 from oslo_utils import units
-from six.moves import urllib
 
 from manila.common import constants as common
 from manila import exception
@@ -27,7 +25,7 @@ from manila.share.drivers.nexenta.ns5 import jsonrpc
 from manila.share.drivers.nexenta import options
 from manila.share.drivers.nexenta import utils
 
-VERSION = '1.1'
+VERSION = '1.2'
 LOG = log.getLogger(__name__)
 ZFS_MULTIPLIER = 1.1  # ZFS quotas do not take metadata into account.
 
@@ -42,6 +40,7 @@ class NexentaNasDriver(driver.ShareDriver):
             - Unshare filesystem completely after last securityContext
               is removed.
             - Moved all http/url code to jsonrpc.
+        1.2 - Added nexenta_ssl_cert_path configuration option.
     """
 
     driver_prefix = 'nexenta'
@@ -88,10 +87,6 @@ class NexentaNasDriver(driver.ShareDriver):
         protocol = ''
         if self.configuration.nexenta_nfs:
             protocol = 'NFS'
-            if self.configuration.nexenta_smb:
-                protocol += '_CIFS'
-        elif self.configuration.nexenta_smb:
-            protocol = 'CIFS'
         else:
             msg = _('At least 1 storage protocol must be enabled.')
             raise exception.NexentaException(msg)
@@ -128,8 +123,12 @@ class NexentaNasDriver(driver.ShareDriver):
             message = (_('NFS root filesystem %(path)s is not mounted')
                        % {'path': filesystem['mountPoint']})
             raise jsonrpc.NefException(code='ENOTDIR', message=message)
+        payload = {}
         if filesystem['nonBlockingMandatoryMode']:
-            payload = {'nonBlockingMandatoryMode': False}
+            payload['nonBlockingMandatoryMode'] = False
+        if filesystem['smartCompression']:
+            payload['smartCompression'] = False
+        if payload:
             self.nef.filesystems.set(self.root_path, payload)
         service = self.nef.services.get('nfs')
         if service['state'] != 'online':
@@ -188,7 +187,7 @@ class NexentaNasDriver(driver.ShareDriver):
         if filesystem['mountPoint'] == 'none':
             payload = {'datasetName': dataset_path}
             self.nef.hpr.activate(payload)
-            filesystem = self.nef.filesystems.get(dataset_path)
+            filesystem = self.nef.filesystems.get(dataset_path, payload)
         elif not filesystem['isMounted']:
             self.nef.filesystems.mount(dataset_path)
         return '%s:%s' % (self.nas_host, filesystem['mountPoint'])
@@ -240,7 +239,7 @@ class NexentaNasDriver(driver.ShareDriver):
 
     def _get_share_name(self, share):
         """Get share name according to share name template."""
-        return ('%(template)s-%(share_id)s' % {
+        return ('%(template)s%(share_id)s' % {
                 'template': self.configuration.nexenta_share_name_template,
                 'share_id': share['share_id']})
 
@@ -418,8 +417,9 @@ class NexentaNasDriver(driver.ShareDriver):
         LOG.debug('Updating access to share %(id)s with following access '
                   'rules: %(rules)s', {
                       'id': self._get_share_name(share),
-                      'rules': [(rule.access_type, rule.access_level,
-                                 rule.access_to) for rule in access_rules]})
+                      'rules': [(
+                          rule.get('access_type'), rule.get('access_level'),
+                          rule.get('access_to')) for rule in access_rules]})
         rw_list = []
         ro_list = []
         if share['share_proto'] == 'NFS':
@@ -433,13 +433,6 @@ class NexentaNasDriver(driver.ShareDriver):
                 else:
                     ro_list.append(rule['access_to'])
             self._update_nfs_access(share, rw_list, ro_list)
-        elif share['share_proto'] == 'CIFS':
-            for rule in access_rules:
-                if rule['access_type'].lower() != 'user':
-                    msg = _(
-                        'Only user access control type is supported for CIFS.')
-                    raise exception.InvalidShareAccess(reason=msg)
-            self._update_cifs_access(share, add_rules, delete_rules)
 
     def _update_nfs_access(self, share, rw_list, ro_list):
         # Define allowed security context types to be able to tell whether
@@ -471,7 +464,7 @@ class NexentaNasDriver(driver.ShareDriver):
                                     addr))
                 rule_list.append(ls)
 
-            # Prevent setting a context type without any addresses, this results in an API error
+            # Context type with no addresses will result in an API error
             if rule_list:
                 security_contexts[sc_type] = rule_list
 
@@ -491,40 +484,9 @@ class NexentaNasDriver(driver.ShareDriver):
             'flags': ['file_inherit', 'dir_inherit'],
             'permissions': ['full_set'],
             'principal': 'everyone@',
-            'type': 'allow',
-            'index': -1
+            'type': 'allow'
         }
         self.nef.filesystems.acl(share_path, payload)
-
-    def _update_cifs_access(self, share, add_rules, delete_rules):
-            share_path = self._get_dataset_path(share)
-            url = 'storage/filesystems/%s' % urllib.parse.quote_plus(
-                share_path)
-            if not self.nef.get(url)['sharedOverSmb']:
-                url = 'nas/smb'
-                data = {'filesystem': share_path}
-                self.nef.post(url, data)
-            url = 'storage/filesystems/%s/acl' % urllib.parse.quote_plus(
-                share_path)
-            for rule in add_rules:
-                data = {
-                    'flags': ['dir_inherit'],
-                    'permissions': ['win_full'],
-                    'principal': 'user:%s' % rule['access_to'],
-                    'type': 'allow',
-                    'index': -1
-                }
-                self.nef.post(url, data)
-            if delete_rules:
-                acl_list = self.nef.get(
-                    'storage/filesystems/%s/acl' % urllib.parse.quote_plus(
-                        share_path))
-            for rule in delete_rules:
-                for acl in acl_list:
-                    principal = acl['principal']
-                    if 'user:' in principal:
-                        if principal.split('user:')[1] == rule['access_to']:
-                            self.nef.delete('%s/%s' % (url, acl['index']))
 
     def _set_quota(self, share, new_size):
         quota = int(new_size * units.Gi * ZFS_MULTIPLIER)
@@ -555,8 +517,8 @@ class NexentaNasDriver(driver.ShareDriver):
             'pools': [{
                 'pool_name': self.pool_name,
                 'compression': compression,
-                'total_capacity_gb': int(total),
-                'free_capacity_gb': int(free),
+                'total_capacity_gb': total,
+                'free_capacity_gb': free,
                 'reserved_percentage': (
                     self.configuration.reserved_share_percentage),
                 'max_over_subscription_ratio': (
@@ -572,26 +534,7 @@ class NexentaNasDriver(driver.ShareDriver):
     def _get_capacity_info(self):
         """Calculate available space on the NFS share."""
         data = self.nef.filesystems.get(self.root_path)
-        free = utils.bytes_to_gb(data['bytesAvailable'])
-        allocated = utils.bytes_to_gb(data['bytesUsed'])
+        free = int(utils.bytes_to_gb(data['bytesAvailable']))
+        allocated = int(utils.bytes_to_gb(data['bytesUsed']))
         total = free + allocated
         return total, free, allocated
-
-    def get_network_allocations_number(self):
-        """Returns number of network allocations for creating VIFs.
-
-        Drivers that use Nova for share servers should return zero (0) here
-        same as Generic driver does.
-        Because Nova will handle network resources allocation.
-        Drivers that handle networking itself should calculate it according
-        to their own requirements. It can have 1+ network interfaces.
-        """
-        return 0
-
-    def setup_server(self, network_info, metadata=None):
-        """Set up and configures share server with given network parameters."""
-        LOG.debug('network_info: %s', network_info)
-
-    def teardown_server(self, server_details, security_services=None):
-        """Teardown share server."""
-        LOG.debug('server_details: %s', server_details)
