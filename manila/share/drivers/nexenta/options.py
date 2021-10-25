@@ -1,5 +1,4 @@
-# Copyright 2018 Nexenta Systems, Inc.
-# All Rights Reserved.
+# Copyright 2021 Nexenta by DDN, Inc. All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -59,7 +58,12 @@ nexenta_connection_opts = [
                 help='On if share over SMB is enabled.'),
     cfg.BoolOpt('nexenta_ssl_cert_verify',
                 default=False,
-                help='Defines whether the driver should check ssl cert.'),
+                help='If set to True the http client will validate the SSL '
+                     'certificate of the backend endpoint'),
+    cfg.StrOpt('nexenta_ssl_cert_path',
+               help='Can be used to specify a non default path to a '
+                    'CA_BUNDLE file or directory with certificates of '
+                    'trusted CAs, which will be used to validate the backend'),
     cfg.FloatOpt('nexenta_rest_connect_timeout',
                  default=30,
                  help='Specifies the time limit (in seconds), within '
