@@ -1,5 +1,4 @@
-# Copyright 2016 Nexenta Systems, Inc.
-# All Rights Reserved.
+# Copyright 2021 Nexenta by DDN, Inc. All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -18,7 +17,7 @@ from oslo_utils import excutils
 
 from manila.common import constants as common
 from manila import exception
-from manila.i18n import _, _LI
+from manila.i18n import _
 from manila.share.drivers.nexenta.ns4 import jsonrpc
 from manila.share.drivers.nexenta import utils
 
@@ -37,9 +36,9 @@ class NFSHelper(object):
             self.configuration.nexenta_dataset_compression)
         self.nms = None
         self.nms_protocol = self.configuration.nexenta_rest_protocol
-        self.nms_host = self.configuration.nexenta_host
+        self.nms_host = self.configuration.nexenta_rest_address
         self.volume = self.configuration.nexenta_volume
-        self.share = self.configuration.nexenta_nfs_share
+        self.share = self.configuration.nexenta_folder
         self.nms_port = self.configuration.nexenta_rest_port
         self.nms_user = self.configuration.nexenta_user
         self.nfs = self.configuration.nexenta_nfs
@@ -111,8 +110,8 @@ class NFSHelper(object):
         except exception.NexentaException as e:
             with excutils.save_and_reraise_exception() as exc:
                 if NOT_EXIST in e.args[0]:
-                    LOG.info(_LI('Folder %s does not exist, it was '
-                                 'already deleted.'), folder)
+                    LOG.info('Folder %s does not exist, it was '
+                             'already deleted.', folder)
                     exc.reraise = False
 
     def _get_share_path(self, share_name):
@@ -136,20 +135,14 @@ class NFSHelper(object):
         except exception.NexentaException as e:
             with excutils.save_and_reraise_exception() as exc:
                 if NOT_EXIST in e.args[0]:
-                    LOG.info(_LI('Snapshot %(folder)s@%(snapshot)s does not '
-                                 'exist, it was already deleted.'),
-                             {
-                                 'folder': share_name,
-                                 'snapshot': snapshot_name,
-                    })
+                    LOG.info('Snapshot %(folder)s@%(snapshot)s does '
+                             'not exist, it was already deleted.',
+                             {'folder': share_name, 'snapshot': snapshot_name})
                     exc.reraise = False
                 elif DEP_CLONES in e.args[0]:
-                    LOG.info(_LI(
-                        'Snapshot %(folder)s@%(snapshot)s has dependent '
-                        'clones, it will be deleted later.'), {
-                            'folder': share_name,
-                            'snapshot': snapshot_name
-                    })
+                    LOG.info('Snapshot %(folder)s@%(snapshot)s has dependent '
+                             'clones, it will be deleted later.',
+                             {'folder': share_name, 'snapshot': snapshot_name})
                     exc.reraise = False
 
     def create_share_from_snapshot(self, share, snapshot):
