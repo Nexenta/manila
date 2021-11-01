@@ -1,5 +1,4 @@
-# Copyright 2016 Nexenta Systems, Inc.
-# All Rights Reserved.
+# Copyright 2021 Nexenta by DDN, Inc. All rights reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -19,7 +18,6 @@
 .. automodule:: nexenta.jsonrpc
 """
 
-import base64
 import json
 import requests
 
@@ -76,14 +74,13 @@ class NexentaJSONProxy(object):
             'method': self.method,
             'params': args,
         })
-        auth = base64.b64encode(
-            ('%s:%s' % (self.user, self.password)).encode('utf-8'))
+        auth = (self.user, self.password)
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': 'Basic %s' % auth,
+            'X-Requested-With': 'XMLHttpRequest'
         }
         LOG.debug('Sending JSON data: %s', data)
-        r = requests.post(self.url, data=data, headers=headers)
+        r = requests.post(self.url, data=data, headers=headers, auth=auth)
         response = json.loads(r.content) if r.content else None
         LOG.debug('Got response: %s', response)
         if response.get('error') is not None:
