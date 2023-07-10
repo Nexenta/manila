@@ -471,6 +471,8 @@ class NexentaNasDriver(driver.ShareDriver):
         add_sc(rw_list, 'readWriteList')
         add_sc(ro_list, 'readOnlyList')
         payload = {'securityContexts': [security_contexts]}
+        if self.configuration.nexenta_anon:
+            payload['anon'] = self.configuration.nexenta_anon
         share_path = self._get_dataset_path(share)
         if self.nef.nfs.list({'filesystem': share_path}):
             if not set(security_contexts.keys()) & context_types:
