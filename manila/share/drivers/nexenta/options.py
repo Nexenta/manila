@@ -92,6 +92,11 @@ nexenta_nfs_opts = [
     cfg.StrOpt('nexenta_mount_point_base',
                default='$state_path/mnt',
                help='Base directory that contains NFS share mount points.'),
+    cfg.StrOpt('nexenta_anon',
+               default='',
+               help='Effective user name for unknown users, '
+                    '-1 disables anonymous access to the share,'
+                    'root allows full access.'),
 ]
 
 nexenta_dataset_opts = [
