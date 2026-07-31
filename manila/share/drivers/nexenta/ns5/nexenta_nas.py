@@ -25,7 +25,7 @@ from manila.share.drivers.nexenta.ns5 import jsonrpc
 from manila.share.drivers.nexenta import options
 from manila.share.drivers.nexenta import utils
 
-VERSION = '1.2'
+VERSION = '1.3'
 LOG = log.getLogger(__name__)
 ZFS_MULTIPLIER = 1.1  # ZFS quotas do not take metadata into account.
 
@@ -41,6 +41,8 @@ class NexentaNasDriver(driver.ShareDriver):
               is removed.
             - Moved all http/url code to jsonrpc.
         1.2 - Added nexenta_ssl_cert_path configuration option.
+        1.3 - Added update_rules argument to update_access to support
+              newer openstack versions.
     """
 
     driver_prefix = 'nexenta'
@@ -397,7 +399,7 @@ class NexentaNasDriver(driver.ShareDriver):
         }]}
 
     def update_access(self, context, share, access_rules, add_rules,
-                      delete_rules, share_server=None):
+                      delete_rules, update_rules, share_server=None):
         """Update access rules for given share.
 
         Using access_rules list for both adding and deleting rules.
@@ -411,6 +413,9 @@ class NexentaNasDriver(driver.ShareDriver):
         :param delete_rules: Empty List or List of access rules which should be
         removed. access_rules doesn't contain these rules. Not used by
         this driver.
+        :param update_rules: Empty List or List of access rules which should be
+        updated. access_rules already contains these rules. Not used by this
+        driver.
         :param share_server: Data structure with share server information.
         Not used by this driver.
         """
